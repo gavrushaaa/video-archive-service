@@ -30,6 +30,13 @@
     videoPlayer: document.getElementById("videoPlayer"),
     playerError: document.getElementById("playerError"),
     closePlayer: document.getElementById("closePlayer"),
+    liveControls: document.getElementById("liveControls"),
+    liveSourceSelect: document.getElementById("liveSourceSelect"),
+    liveStart: document.getElementById("liveStart"),
+    liveStop: document.getElementById("liveStop"),
+    liveStatus: document.getElementById("liveStatus"),
+    liveFrame: document.getElementById("liveFrame"),
+    liveImage: document.getElementById("liveImage"),
   };
 
   let recordings = [];
@@ -39,6 +46,9 @@
   let activeController = null;
   let refreshTimer = null;
   let pageIsLeaving = false;
+  let liveSources = [];
+  let liveRequestActive = false;
+  let liveConnectTimer = null;
 
   function makeElement(tag, className, text) {
     const element = document.createElement(tag);
@@ -116,6 +126,119 @@
     }
   }
 
+  function setLiveStatus(message, state) {
+    elements.liveStatus.textContent = message;
+    elements.liveStatus.dataset.state = state || "";
+  }
+
+  function stopLivePreview(message) {
+    liveRequestActive = false;
+    if (liveConnectTimer !== null) {
+      window.clearTimeout(liveConnectTimer);
+      liveConnectTimer = null;
+    }
+    elements.liveImage.removeAttribute("src");
+    elements.liveImage.hidden = true;
+    elements.liveFrame.hidden = true;
+    elements.liveStart.disabled = false;
+    elements.liveStop.hidden = true;
+    if (message) setLiveStatus(message);
+  }
+
+  function renderLiveSources(sources) {
+    const previousId = elements.liveSourceSelect.value;
+    const nextSources = Array.isArray(sources)
+      ? sources.filter((item) => item && typeof item.id === "string" && typeof item.label === "string")
+      : [];
+    const previousStillExists = nextSources.some((item) => item.id === previousId);
+    const currentId = elements.liveSourceSelect.value;
+    if (liveRequestActive && !nextSources.some((item) => item.id === currentId)) {
+      stopLivePreview("Выбранный источник больше не доступен.");
+    }
+    liveSources = nextSources;
+    elements.liveSourceSelect.replaceChildren();
+    for (const source of liveSources) {
+      const option = document.createElement("option");
+      option.value = source.id;
+      option.textContent = source.label;
+      elements.liveSourceSelect.append(option);
+    }
+
+    if (liveSources.length === 0) {
+      stopLivePreview();
+      elements.liveControls.hidden = true;
+      setLiveStatus("Источник не настроен. Подключите RTSP/HTTP-камеру или запустите синтетический источник для демонстрации.");
+      return;
+    }
+
+    elements.liveControls.hidden = false;
+    elements.liveSourceSelect.value = previousStillExists ? previousId : liveSources[0].id;
+    if (!liveRequestActive) {
+      setLiveStatus("Выберите источник и нажмите «Открыть эфир».");
+    }
+  }
+
+  async function refreshLiveSources(signal) {
+    try {
+      const data = await getJson("/api/live/sources", signal);
+      renderLiveSources(data && data.sources);
+    } catch (error) {
+      if (error.name === "AbortError") return;
+      stopLivePreview();
+      elements.liveControls.hidden = true;
+      setLiveStatus("Не удалось получить список источников для прямого просмотра.", "error");
+    }
+  }
+
+  function startLivePreview() {
+    const sourceId = elements.liveSourceSelect.value;
+    if (!sourceId || !liveSources.some((source) => source.id === sourceId)) return;
+    stopLivePreview();
+    liveRequestActive = true;
+    elements.liveImage.alt = `Прямой видеопоток: ${elements.liveSourceSelect.selectedOptions[0].textContent}`;
+    elements.liveImage.hidden = false;
+    elements.liveFrame.hidden = false;
+    elements.liveStart.disabled = true;
+    elements.liveStop.hidden = false;
+    setLiveStatus("Подключаемся к потоку…");
+    const query = new URLSearchParams({ source_id: sourceId, t: String(Date.now()) });
+    elements.liveImage.src = `/api/live.mjpeg?${query.toString()}`;
+    const deadline = Date.now() + 15_000;
+    const checkForFirstFrame = () => {
+      liveConnectTimer = null;
+      if (!liveRequestActive) return;
+      if (elements.liveImage.naturalWidth > 0 && elements.liveImage.naturalHeight > 0) {
+        markLivePreviewConnected();
+      } else if (Date.now() >= deadline) {
+        elements.liveStart.disabled = false;
+        setLiveStatus("Поток ещё не появился. Проверьте доступность камеры и её адрес.", "error");
+      } else {
+        liveConnectTimer = window.setTimeout(checkForFirstFrame, 250);
+      }
+    };
+    liveConnectTimer = window.setTimeout(checkForFirstFrame, 250);
+  }
+
+  function markLivePreviewConnected() {
+    if (!liveRequestActive) return;
+    if (liveConnectTimer !== null) {
+      window.clearTimeout(liveConnectTimer);
+      liveConnectTimer = null;
+    }
+    elements.liveStart.disabled = false;
+    setLiveStatus("Прямой эфир подключён.", "online");
+  }
+
+  function markLivePreviewFailed() {
+    if (!liveRequestActive) return;
+    if (liveConnectTimer !== null) {
+      window.clearTimeout(liveConnectTimer);
+      liveConnectTimer = null;
+    }
+    elements.liveStart.disabled = false;
+    setLiveStatus("Не удалось получить изображение. Проверьте состояние источника и повторите попытку.", "error");
+  }
+
   function isRecording(item) {
     return Boolean(
       item &&
@@ -160,6 +283,7 @@
     refreshPromise = Promise.all([
       refreshHealth(signal),
       refreshRecordings(signal),
+      refreshLiveSources(signal),
     ]).finally(() => {
       refreshPromise = null;
       activeController = null;
@@ -365,12 +489,20 @@
   });
   elements.emptyReset.addEventListener("click", () => elements.clearFilters.click());
   elements.closePlayer.addEventListener("click", closePlayer);
+  elements.liveStart.addEventListener("click", startLivePreview);
+  elements.liveStop.addEventListener("click", () => stopLivePreview("Прямой просмотр остановлен."));
+  elements.liveSourceSelect.addEventListener("change", () => {
+    if (liveRequestActive) stopLivePreview("Источник изменён. Нажмите «Открыть эфир».");
+  });
+  elements.liveImage.addEventListener("load", markLivePreviewConnected);
+  elements.liveImage.addEventListener("error", markLivePreviewFailed);
   elements.videoPlayer.addEventListener("error", () => {
     if (currentName) elements.playerError.hidden = false;
   });
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
       stopAutoRefresh(true);
+      if (liveRequestActive) stopLivePreview("Просмотр остановлен, вкладка скрыта.");
     } else {
       refreshAll();
       startAutoRefresh();
@@ -379,6 +511,7 @@
   window.addEventListener("pagehide", () => {
     pageIsLeaving = true;
     stopAutoRefresh(true);
+    stopLivePreview();
   });
   document.addEventListener("keydown", (event) => {
     const target = event.target;

@@ -1,4 +1,5 @@
 import json
+import shutil
 import tempfile
 import threading
 import unittest
@@ -8,6 +9,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from config import Settings
+from live import LivePreviewManager
 from main import make_handler, parse_range_header
 from storage import VideoStorage
 
@@ -29,8 +31,12 @@ class VideoRouteTests(unittest.TestCase):
         self.storage.ensure_directories()
         self.name = "2026-10-15_09-00-00.mp4"
         (self.root / "recordings" / self.name).write_bytes(b"0123456789")
+        self.live_preview = LivePreviewManager(Settings(source_type="synthetic"))
         server_type = type("TestServer", (ThreadingHTTPServer,), {"daemon_threads": True})
-        self.server = server_type(("127.0.0.1", 0), make_handler(self.storage, DummyArchive()))
+        self.server = server_type(
+            ("127.0.0.1", 0),
+            make_handler(self.storage, DummyArchive(), self.live_preview),
+        )
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.base = "http://127.0.0.1:{}".format(self.server.server_address[1])
@@ -47,6 +53,21 @@ class VideoRouteTests(unittest.TestCase):
         with urlopen(self.base + "/api/health") as response:
             health = json.loads(response.read().decode("utf-8"))
         self.assertEqual(health["status"], "ok")
+
+    @unittest.skipUnless(shutil.which("ffmpeg"), "FFmpeg is required for the live preview test")
+    def test_live_sources_and_mjpeg_stream(self):
+        with urlopen(self.base + "/api/live/sources") as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        self.assertEqual(payload["sources"], [{"id": "synthetic", "label": "Тестовый источник"}])
+
+        with urlopen(self.base + "/api/live.mjpeg?source_id=synthetic", timeout=10) as response:
+            self.assertEqual(response.status, 200)
+            self.assertTrue(response.headers.get("Content-Type", "").startswith(
+                "multipart/x-mixed-replace; boundary=frame"
+            ))
+            frame = response.read(512)
+        self.assertIn(b"--frame", frame)
+        self.assertIn(b"\xff\xd8", frame)
 
     def test_homepage_and_static_assets(self):
         with urlopen(self.base + "/") as response:

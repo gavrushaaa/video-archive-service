@@ -6,10 +6,11 @@ import re
 import signal
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from archive import ArchiveService, MultiArchiveService, show
 from config import Settings
+from live import LivePreviewBusy, LivePreviewManager, LiveSourceNotFound
 from storage import VideoStorage, parse_recording_name
 
 
@@ -46,7 +47,7 @@ def parse_range_header(value, size):
     return start, min(end, size - 1)
 
 
-def make_handler(storage: VideoStorage, archive):
+def make_handler(storage: VideoStorage, archive, live_preview=None):
     class VideoRequestHandler(BaseHTTPRequestHandler):
         server_version = "VideoArchive/1.0"
 
@@ -64,11 +65,17 @@ def make_handler(storage: VideoStorage, archive):
                 self.wfile.write(payload)
 
         def do_GET(self):
-            path = urlsplit(self.path).path
+            parsed = urlsplit(self.path)
+            path = parsed.path
             if path in _STATIC_FILES:
                 self._serve_static(path)
             elif path == "/api/health":
                 self._json(200, {"status": "ok", "archive": archive.status})
+            elif path == "/api/live/sources":
+                sources = live_preview.list_sources() if live_preview else []
+                self._json(200, {"sources": sources})
+            elif path == "/api/live.mjpeg":
+                self._serve_live_preview(parsed.query, live_preview)
             elif path == "/api/videos":
                 try:
                     self._json(200, {"videos": storage.list_recordings()})
@@ -162,6 +169,57 @@ def make_handler(storage: VideoStorage, archive):
             except OSError:
                 LOG.exception("Ошибка чтения видео %s", name)
 
+        def _serve_live_preview(self, query, live_preview):
+            sources = live_preview.list_sources() if live_preview else []
+            if not sources:
+                self._json(409, {"error": "Источники для прямого просмотра не настроены"})
+                return
+
+            values = parse_qs(query).get("source_id", [])
+            source_id = values[0] if values else None
+            if source_id is None:
+                if len(sources) != 1:
+                    self._json(400, {"error": "Укажите source_id для камеры"})
+                    return
+                source_id = sources[0]["id"]
+
+            try:
+                process = live_preview.start(source_id)
+            except LiveSourceNotFound:
+                self._json(404, {"error": "Источник прямого просмотра не найден"})
+                return
+            except LivePreviewBusy:
+                self._json(503, {"error": "Достигнут лимит одновременных live-просмотров"})
+                return
+            except (OSError, ValueError):
+                LOG.exception("Не удалось запустить FFmpeg для live-просмотра")
+                self._json(503, {"error": "Не удалось запустить прямой просмотр"})
+                return
+
+            try:
+                self.send_response(200)
+                self.send_header(
+                    "Content-Type",
+                    "multipart/x-mixed-replace; boundary={}".format(LivePreviewManager.BOUNDARY),
+                )
+                self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+                self.send_header("Pragma", "no-cache")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("X-Accel-Buffering", "no")
+                self.end_headers()
+                if process.stdout is None:
+                    return
+                while True:
+                    chunk = process.stdout.read(4096)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+                LOG.debug("Клиент прекратил live-просмотр источника %s", source_id)
+            finally:
+                live_preview.stop(process)
+
     return VideoRequestHandler
 
 
@@ -184,8 +242,9 @@ def run(settings=None):
         MultiArchiveService(settings, storage)
         if settings.cameras else ArchiveService(settings, storage)
     )
+    live_preview = LivePreviewManager(settings)
     server = VideoHTTPServer(
-        (settings.host, settings.port), make_handler(storage, archive)
+        (settings.host, settings.port), make_handler(storage, archive, live_preview)
     )
     previous = {}
     try:
