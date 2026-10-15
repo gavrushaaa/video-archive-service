@@ -1,0 +1,21 @@
+# Python bytecode and local environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Local camera settings and credentials
+.env
+.env.*
+!.env.example
+cameras.local.json
+config.local.json
+
+# Runtime data and local QA output
+recordings/
+temp/
+inbox/
+output/
+.playwright-cli/
+*.log
