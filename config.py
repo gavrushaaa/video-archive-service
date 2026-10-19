@@ -8,6 +8,22 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 
+_CAMERA_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
+_WINDOWS_RESERVED_NAME_RE = re.compile(
+    r"^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)", re.IGNORECASE
+)
+
+
+def _valid_camera_id(value) -> bool:
+    """Check IDs that are safe as path components on both Windows and Linux."""
+    return bool(
+        isinstance(value, str)
+        and _CAMERA_ID_RE.fullmatch(value)
+        and not value.endswith(".")
+        and not _WINDOWS_RESERVED_NAME_RE.match(value)
+    )
+
+
 @dataclass(frozen=True)
 class CameraSource:
     camera_id: str
@@ -92,10 +108,11 @@ class Settings:
             raise ValueError("VIDEO_SOURCE должен быть none, synthetic, ffmpeg или inbox")
         if settings.source_type == "ffmpeg" and not settings.source_url:
             raise ValueError("Для VIDEO_SOURCE=ffmpeg укажите VIDEO_SOURCE_URL")
-        if settings.camera_id and not re.fullmatch(
-            r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", settings.camera_id
-        ):
-            raise ValueError("VIDEO_CAMERA_ID может содержать только буквы, цифры, точку, дефис и подчёркивание")
+        if settings.camera_id and not _valid_camera_id(settings.camera_id):
+            raise ValueError(
+                "VIDEO_CAMERA_ID должен содержать 1..64 символа из букв ASCII, цифр, точки, дефиса "
+                "и подчёркивания, не оканчиваться точкой и не быть зарезервированным именем Windows"
+            )
         return settings
 
     @staticmethod
@@ -116,19 +133,22 @@ class Settings:
                 raise ValueError("Элемент {} в VIDEO_CAMERAS должен быть объектом".format(index))
             camera_id = value.get("id")
             url = value.get("url")
-            if not isinstance(camera_id, str) or not re.fullmatch(
-                r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", camera_id
-            ):
+            if not _valid_camera_id(camera_id):
                 raise ValueError(
-                    "У каждой камеры в VIDEO_CAMERAS должен быть id из букв, цифр, точки, дефиса или подчёркивания"
+                    "У каждой камеры в VIDEO_CAMERAS должен быть переносимый id: 1..64 символа из букв ASCII, "
+                    "цифр, точки, дефиса и подчёркивания; нельзя оканчивать id точкой или использовать "
+                    "зарезервированное имя Windows"
                 )
-            if camera_id in seen_ids:
-                raise ValueError("Идентификаторы камер в VIDEO_CAMERAS должны быть уникальными")
+            normalized_id = camera_id.casefold()
+            if normalized_id in seen_ids:
+                raise ValueError(
+                    "Идентификаторы камер в VIDEO_CAMERAS должны быть уникальными без учёта регистра"
+                )
             if not isinstance(url, str) or not url.strip():
                 raise ValueError("У каждой камеры в VIDEO_CAMERAS должен быть непустой url")
             if not url.lower().startswith(("rtsp://", "http://", "https://")):
                 raise ValueError("Адрес камеры в VIDEO_CAMERAS должен начинаться с rtsp://, http:// или https://")
-            seen_ids.add(camera_id)
+            seen_ids.add(normalized_id)
             cameras.append(CameraSource(camera_id=camera_id, url=url.strip()))
         return tuple(cameras)
 

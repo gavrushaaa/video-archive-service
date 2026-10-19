@@ -112,8 +112,18 @@ Range: bytes=0-1023
 
 ## Примеры запросов
 
+Windows PowerShell (используется `curl.exe`, а не псевдоним PowerShell `curl`):
+
 ```powershell
+curl.exe http://127.0.0.1:8765/api/health
+curl.exe http://127.0.0.1:8765/api/videos
+curl.exe -H "Range: bytes=0-1023" http://127.0.0.1:8765/api/videos/2026-10-15_09-00-00.mp4 --output chunk.bin
+```
+
+Linux:
+
+```sh
 curl http://127.0.0.1:8765/api/health
 curl http://127.0.0.1:8765/api/videos
-curl -H "Range: bytes=0-1023" http://127.0.0.1:8765/api/videos/2026-10-15_09-00-00.mp4 --output chunk.bin
+curl -H 'Range: bytes=0-1023' http://127.0.0.1:8765/api/videos/2026-10-15_09-00-00.mp4 --output chunk.bin
 ```

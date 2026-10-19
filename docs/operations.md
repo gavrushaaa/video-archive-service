@@ -15,6 +15,14 @@ ffmpeg -version
 ffprobe -version
 ```
 
+На Linux проверьте те же утилиты:
+
+```sh
+python3 --version
+ffmpeg -version
+ffprobe -version
+```
+
 Если `ffmpeg` или `ffprobe` не находятся через `PATH`, задайте `VIDEO_FFMPEG` и/или `VIDEO_FFPROBE` полными путями к файлам.
 
 ## Установка и запуск на Windows
@@ -30,19 +38,20 @@ ffmpeg -version
 
 Откройте `http://127.0.0.1:8765/`. Для записи настройте источник до запуска по инструкциям в [настройке](configuration.md). Переменные среды относятся к тому процессу PowerShell, из которого запускается Python.
 
-## Установка и запуск на Linux/macOS
+## Установка и запуск на Linux
 
 Установите Python и FFmpeg средствами своей ОС, затем из корня проекта:
 
 ```sh
 python3 -m venv .venv
-. .venv/bin/activate
-python -m pip install -r requirements.txt
+.venv/bin/python -m pip install -r requirements.txt
 ffmpeg -version
-python main.py
+.venv/bin/python main.py
 ```
 
 В браузере откройте `http://127.0.0.1:8765/`.
+
+Запускайте сервис из каталога проекта или задайте абсолютные `VIDEO_RECORDINGS_DIR` и `VIDEO_TEMP_DIR`. Учётная запись процесса должна иметь право создавать каталоги и файлы в этих местах. На Linux это особенно важно при запуске из системного каталога; не запускайте сервис с правами `root` только ради доступа к архиву.
 
 ## Остановка и перезапуск
 

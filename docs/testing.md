@@ -12,6 +12,18 @@ python -m unittest discover -s tests -v
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
+На Linux из активированного виртуального окружения используйте:
+
+```sh
+python3 -m unittest discover -s tests -v
+```
+
+Либо без активации окружения:
+
+```sh
+.venv/bin/python -m unittest discover -s tests -v
+```
+
 Тесты не подключаются к настоящим камерам. Большинство проверок не требуют FFmpeg; тест `test_live_sources_and_mjpeg_stream` запускает FFmpeg с синтетическим видеорядом и проверяет, что HTTP-маршрут выдаёт MJPEG-кадры. Если FFmpeg отсутствует, этот тест пропускается.
 
 ## Покрытие по файлам

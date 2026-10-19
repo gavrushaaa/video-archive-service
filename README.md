@@ -14,6 +14,8 @@
 
 Требуются Python 3.8+ и FFmpeg в `PATH` для сетевых или синтетических источников. Python-пакеты из сторонних источников сервису не нужны.
 
+**Windows (PowerShell):**
+
 ```powershell
 py -3 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
@@ -21,7 +23,16 @@ ffmpeg -version
 .\.venv\Scripts\python.exe main.py
 ```
 
-Откройте `http://127.0.0.1:8765/`. Без настройки `VIDEO_SOURCE` или `VIDEO_CAMERAS` запускается только HTTP-интерфейс, запись не ведётся. Полные инструкции по источникам приведены в [настройке](docs/configuration.md).
+**Linux:**
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+ffmpeg -version
+.venv/bin/python main.py
+```
+
+Откройте `http://127.0.0.1:8765/`. Без настройки `VIDEO_SOURCE` или `VIDEO_CAMERAS` запускается только HTTP-интерфейс, запись не ведётся. Полные инструкции по установке и источникам приведены в [эксплуатации](docs/operations.md) и [настройке](docs/configuration.md).
 
 ## Архитектура
 
@@ -115,7 +126,7 @@ $env:VIDEO_CAMERAS = '[{"id":"entrance","url":"rtsp://USER:PASSWORD@192.168.1.20
 python main.py
 ```
 
-Чтобы оставить только одну камеру, удалите из массива лишние элементы или используйте одиночные переменные выше. Не задавайте одновременно `VIDEO_CAMERAS` и `VIDEO_SOURCE`, `VIDEO_SOURCE_URL` или `VIDEO_CAMERA_ID`. Идентификаторы камер разрешают буквы и цифры ASCII, точку, дефис и подчёркивание.
+Чтобы оставить только одну камеру, удалите из массива лишние элементы или используйте одиночные переменные выше. Не задавайте одновременно `VIDEO_CAMERAS` и `VIDEO_SOURCE`, `VIDEO_SOURCE_URL` или `VIDEO_CAMERA_ID`. ID камер из ASCII-букв, цифр, точки, дефиса и подчёркивания должны быть уникальны без учёта регистра, не оканчиваться точкой и не совпадать с зарезервированным именем Windows.
 
 ### Передача готовых часовых файлов
 
