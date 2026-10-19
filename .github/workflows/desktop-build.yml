@@ -21,15 +21,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
+        if: runner.os == 'Windows'
         with:
           python-version: "3.10"
       - name: Build Windows application
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./build_desktop.ps1
-      - name: Build Linux application
+      - name: Build Linux application with glibc 2.28 baseline
         if: runner.os == 'Linux'
-        run: sh ./build_desktop.sh
+        run: |
+          docker build \
+            --file docker/linux/Dockerfile \
+            --tag videoarchive-linux-builder:glibc228 \
+            docker/linux
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/io" \
+            --workdir /io \
+            --env VIDEOARCHIVE_BUILD_PYTHON=/opt/cpython/bin/python3.12 \
+            --env VIDEOARCHIVE_BUILD_VENV=/tmp/videoarchive-venv \
+            videoarchive-linux-builder:glibc228 \
+            sh ./build_desktop.sh
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
