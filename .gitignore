@@ -2,8 +2,10 @@
 __pycache__/
 *.py[cod]
 .venv/
+.venv-desktop/
 venv/
 env/
+build/
 
 # Local camera settings and credentials
 .env

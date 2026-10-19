@@ -1,0 +1,4 @@
+# Desktop UI and Windows/Linux executable builder.
+PySide6==6.10.3
+PyInstaller==6.22.3
+pyinstaller-hooks-contrib==2026.8

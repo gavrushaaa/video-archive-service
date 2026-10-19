@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import signal
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
@@ -228,30 +229,87 @@ class VideoHTTPServer(ThreadingHTTPServer):
     allow_reuse_address = True
 
 
+class ServiceRuntime:
+    """Own the HTTP server and archive lifecycle for CLI or desktop callers."""
+
+    def __init__(self, settings):
+        self.settings = settings
+        self.storage = VideoStorage(
+            settings.recordings_dir, settings.temp_dir,
+            settings.min_free_bytes, settings.ffprobe_bin,
+        )
+        self.archive = (
+            MultiArchiveService(settings, self.storage)
+            if settings.cameras else ArchiveService(settings, self.storage)
+        )
+        self.live_preview = LivePreviewManager(settings)
+        self.server = VideoHTTPServer(
+            (settings.host, settings.port),
+            make_handler(self.storage, self.archive, self.live_preview),
+        )
+        self._server_thread = None
+        self._archive_started = False
+
+    @property
+    def port(self):
+        return self.server.server_port
+
+    @property
+    def is_running(self):
+        return bool(self._server_thread and self._server_thread.is_alive())
+
+    @property
+    def is_recording(self):
+        return self._archive_started
+
+    def start(self, start_archive=True):
+        if self.is_running:
+            return
+        if start_archive:
+            self.start_archive()
+        self._server_thread = threading.Thread(
+            target=self.server.serve_forever,
+            kwargs={"poll_interval": 0.25},
+            name="video-http",
+            daemon=True,
+        )
+        self._server_thread.start()
+        LOG.info("HTTP API запущен на http://%s:%s", self.settings.host, self.port)
+        if self.settings.host not in ("127.0.0.1", "localhost", "::1"):
+            LOG.warning("Сервер доступен по сети; ограничьте доступ правилами брандмауэра")
+
+    def start_archive(self):
+        if not self._archive_started:
+            self.archive.start()
+            self._archive_started = True
+
+    def stop_archive(self):
+        if self._archive_started:
+            self.archive.stop()
+            self._archive_started = False
+
+    def stop(self):
+        if self.is_running:
+            self.server.shutdown()
+            self._server_thread.join(timeout=5)
+        self.server.server_close()
+        self.stop_archive()
+
+    def wait(self):
+        if self._server_thread:
+            self._server_thread.join()
+
+
 def run(settings=None):
     settings = settings or Settings.from_env()
     logging.basicConfig(
         level=getattr(logging, settings.log_level, logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    storage = VideoStorage(
-        settings.recordings_dir, settings.temp_dir,
-        settings.min_free_bytes, settings.ffprobe_bin,
-    )
-    archive = (
-        MultiArchiveService(settings, storage)
-        if settings.cameras else ArchiveService(settings, storage)
-    )
-    live_preview = LivePreviewManager(settings)
-    server = VideoHTTPServer(
-        (settings.host, settings.port), make_handler(storage, archive, live_preview)
-    )
+    runtime = ServiceRuntime(settings)
     previous = {}
     try:
-        archive.start()
-        LOG.info("HTTP API запущен на http://%s:%s", settings.host, settings.port)
-        if settings.host not in ("127.0.0.1", "localhost", "::1"):
-            LOG.warning("Сервер доступен по сети; ограничьте доступ правилами брандмауэра")
+        runtime.start()
 
         def request_shutdown(signum, frame):
             raise KeyboardInterrupt()
@@ -263,12 +321,11 @@ def run(settings=None):
                     previous[sig] = signal.signal(sig, request_shutdown)
                 except (ValueError, OSError):
                     pass
-        server.serve_forever(poll_interval=0.25)
+        runtime.wait()
     except KeyboardInterrupt:
         LOG.info("Получен запрос на остановку")
     finally:
-        server.server_close()
-        archive.stop()
+        runtime.stop()
         for sig, handler in previous.items():
             try:
                 signal.signal(sig, handler)

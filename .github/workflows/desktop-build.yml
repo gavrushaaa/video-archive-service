@@ -1,0 +1,37 @@
+name: Desktop builds
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: VideoArchive-Windows
+            file: output/windows/VideoArchive.exe
+          - os: ubuntu-24.04
+            artifact: VideoArchive-Linux
+            file: output/linux/VideoArchive
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Build Windows application
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./build_desktop.ps1
+      - name: Build Linux application
+        if: runner.os == 'Linux'
+        run: sh ./build_desktop.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.file }}
+          if-no-files-found: error
